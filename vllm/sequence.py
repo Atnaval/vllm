@@ -193,6 +193,7 @@ class SequenceGroup:
         seqs: The list of sequences.
         sampling_params: The sampling parameters used to generate the outputs.
         arrival_time: The arrival time of the request.
+        priority: If true, sequence group is preprended instead of appended
     """
 
     def __init__(
@@ -201,11 +202,13 @@ class SequenceGroup:
         seqs: List[Sequence],
         sampling_params: SamplingParams,
         arrival_time: float,
+        priority: bool = False
     ) -> None:
         self.request_id = request_id
         self.seqs = seqs
         self.sampling_params = sampling_params
         self.arrival_time = arrival_time
+        self.priority = priority
 
     def get_seqs(
         self,

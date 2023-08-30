@@ -230,6 +230,7 @@ class LLMEngine:
         sampling_params: SamplingParams,
         prompt_token_ids: Optional[List[int]] = None,
         arrival_time: Optional[float] = None,
+        priority: bool = False
     ) -> None:
         """Add a request to the engine's request pool.
 
@@ -246,6 +247,7 @@ class LLMEngine:
                 use the tokenizer to convert the prompts to token IDs.
             arrival_time: The arrival time of the request. If None, we use
                 the current time.
+            priority: If true the request is prepended to the queue
         """
         if arrival_time is None:
             arrival_time = time.time()
@@ -263,7 +265,7 @@ class LLMEngine:
 
         # Create the sequence group.
         seq_group = SequenceGroup(request_id, seqs, sampling_params,
-                                  arrival_time)
+                                  arrival_time, priority)
 
         # Add the sequence group to the scheduler.
         self.scheduler.add_seq_group(seq_group)

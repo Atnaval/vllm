@@ -31,6 +31,8 @@ class FCFS(Policy):
         now: float,
         seq_group: SequenceGroup,
     ) -> float:
+        if seq_group.priority is not None:
+            return 999999999999999
         return now - seq_group.arrival_time
 
 

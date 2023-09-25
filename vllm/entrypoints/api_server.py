@@ -2,7 +2,7 @@ import argparse
 import json
 from typing import AsyncGenerator
 
-from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 import uvicorn
 
@@ -14,6 +14,7 @@ from vllm.utils import random_uuid
 TIMEOUT_KEEP_ALIVE = 5  # seconds.
 TIMEOUT_TO_PREVENT_DEADLOCK = 1  # seconds.
 app = FastAPI()
+engine = None
 
 
 @app.post("/generate")
@@ -31,6 +32,7 @@ async def generate(request: Request) -> Response:
     priority = request_dict.pop("priority", False)
     sampling_params = SamplingParams(**request_dict)
     request_id = random_uuid()
+    
     results_generator = engine.generate(prompt, sampling_params, request_id, priority)
 
     # Streaming case
@@ -43,14 +45,8 @@ async def generate(request: Request) -> Response:
             ret = {"text": text_outputs}
             yield (json.dumps(ret) + "\0").encode("utf-8")
 
-    async def abort_request() -> None:
-        await engine.abort(request_id)
-
     if stream:
-        background_tasks = BackgroundTasks()
-        # Abort the request if the client disconnects.
-        background_tasks.add_task(abort_request)
-        return StreamingResponse(stream_results(), background=background_tasks)
+        return StreamingResponse(stream_results())
 
     # Non-streaming case
     final_output = None

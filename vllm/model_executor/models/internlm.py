@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 from torch import nn
@@ -17,7 +17,7 @@ from vllm.model_executor.parallel_utils.tensor_parallel import (
 from vllm.model_executor.weight_utils import (
     hf_model_weights_iterator, load_padded_tensor_parallel_vocab,
     load_tensor_parallel_weights)
-from vllm.sequence import SequenceOutputs
+from vllm.sequence import SamplerOutput
 
 KVCache = Tuple[torch.Tensor, torch.Tensor]
 
@@ -59,6 +59,8 @@ class InternLMAttention(nn.Module):
         self,
         hidden_size: int,
         num_heads: int,
+        rope_theta: float = 10000,
+        max_position_embeddings: int = 8192,
     ):
         super().__init__()
         self.hidden_size = hidden_size
@@ -70,6 +72,8 @@ class InternLMAttention(nn.Module):
                           tensor_model_parallel_world_size)
         self.head_dim = hidden_size // self.total_num_heads
         self.scaling = self.head_dim**-0.5
+        self.rope_theta = rope_theta
+        self.max_position_embeddings = max_position_embeddings
 
         self.qkv_proj = ColumnParallelLinear(
             hidden_size,
@@ -85,10 +89,13 @@ class InternLMAttention(nn.Module):
             input_is_parallel=True,
             perform_initialization=False,
         )
-        self.attn = PagedAttentionWithRoPE(self.num_heads,
-                                           self.head_dim,
-                                           self.scaling,
-                                           rotary_dim=self.head_dim)
+        self.attn = PagedAttentionWithRoPE(
+            self.num_heads,
+            self.head_dim,
+            self.scaling,
+            base=self.rope_theta,
+            max_position=self.max_position_embeddings,
+            rotary_dim=self.head_dim)
 
     def forward(
         self,
@@ -112,9 +119,14 @@ class InternLMDecoderLayer(nn.Module):
     def __init__(self, config: LlamaConfig):
         super().__init__()
         self.hidden_size = config.hidden_size
+        rope_theta = getattr(config, "rope_theta", 10000)
+        max_position_embeddings = getattr(config, "max_position_embeddings",
+                                          8192)
         self.self_attn = InternLMAttention(
             hidden_size=self.hidden_size,
             num_heads=config.num_attention_heads,
+            rope_theta=rope_theta,
+            max_position_embeddings=max_position_embeddings,
         )
         self.mlp = InternLMMLP(
             hidden_size=self.hidden_size,
@@ -218,7 +230,7 @@ class InternLMForCausalLM(nn.Module):
         kv_caches: List[KVCache],
         input_metadata: InputMetadata,
         cache_events: Optional[List[torch.cuda.Event]],
-    ) -> Dict[int, SequenceOutputs]:
+    ) -> SamplerOutput:
         hidden_states = self.model(input_ids, positions, kv_caches,
                                    input_metadata, cache_events)
         next_tokens = self.sampler(self.lm_head.weight, hidden_states,
@@ -233,12 +245,13 @@ class InternLMForCausalLM(nn.Module):
     def load_weights(self,
                      model_name_or_path: str,
                      cache_dir: Optional[str] = None,
-                     use_np_cache: bool = False):
+                     load_format: str = "auto",
+                     revision: Optional[str] = None):
         tensor_model_parallel_rank = get_tensor_model_parallel_rank()
         state_dict = self.state_dict()
 
         for name, loaded_weight in hf_model_weights_iterator(
-                model_name_or_path, cache_dir, use_np_cache):
+                model_name_or_path, cache_dir, load_format, revision):
             if "rotary_emb.inv_freq" in name:
                 continue
 
